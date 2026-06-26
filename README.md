@@ -105,7 +105,7 @@ ruff check .
 - **Response**: `200 OK`
 ```json
 {
-  "status": "healthy"
+  "status": "ok"
 }
 ```
 
@@ -149,8 +149,23 @@ curl -X POST http://localhost:8000/sort-ticket \
 
 ---
 
-## Submission Details
-- **Deployment Platform**: Render / Railway / Fly / Poridhi Lab / Other
-- **Live URL**: `https://<your-live-deployment-host>`
-- **LLM Usage**: Yes (`gemini-1.5-flash` with rules-based fallback)
-# sust-mock-preli
+## Submission Details & Hackathon Checklist
+
+### 🤖 AI / Model Usage Explanation
+- **Architecture**: A hybrid Rules + AI system.
+- **Primary Engine**: Uses `google/gemini-2.5-flash-lite` via the OpenRouter Chat Completions API. It uses structured JSON response generation to contextually analyze semantic inputs, locale variations (en/bn/mixed), and generate natural language summaries.
+- **Fallback Engine**: If `OPENROUTER_API_KEY` is not present, or if OpenRouter is offline, the system drops back to a robust keyword-regex parser. This fallback runs locally in <1ms and guarantees that the server stays active.
+
+### 🛡️ Safety & Guardrails Logic
+A defensive post-processor intercepts and sanitizes the `agent_summary` field before returning it to the user:
+1. **Credentials Scrubbing**: Any attempt to ask the customer to share their secret credentials (`PIN`, `OTP`, `password`, `card number`) is intercepted and sanitized.
+2. **Unauthorized Decisions / Promises**: To prevent the API from acting as an unauthorized authority, any summary that promises direct action (such as *"We will refund your BDT..."* or *"Agent has reversed the transaction"*) is rewritten to represent the customer's request (*"Customer requests refund/recovery"*).
+3. **Suspicious Third Party Redirects**: Any direction urging the customer to call or contact external, unauthorized number/agents is redirected to official support channels.
+
+### ⚠️ Known Limitations
+- **Slang and Lexicon**: Extraneous Banglish or Bengali slang words not covered by the heuristics dictionary or LLM semantic weights may result in lower routing confidence.
+- **Timeout Fallback**: If the OpenRouter completions API responds in > 4.5 seconds, the circuit breaker triggers fallback mode. In this case, classification uses heuristics (meaning summaries are template-based rather than dynamically generated).
+
+### 🔒 Secrets & Security Confirmation
+- [x] No API keys, passwords, or credentials are baked into the Docker image, code files, or repository.
+- [x] `.env` is gitignored (template provided in `.env.example`). Deployed environments load secrets via standard environment variables.

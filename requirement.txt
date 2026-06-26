@@ -1,0 +1,96 @@
+bKash presents
+SUST CSE Carnival 2026
+Codex Community Hackathon | Mock Preliminary Round
+QueueStorm Warmup: Mock Preliminary Task
+A 1 hour rehearsal exercise before the official Online Preliminary
+
+What You Are Building
+Imagine a busy digital finance company on a chaotic afternoon. Customers are messaging support from every direction.
+Some lost money to a wrong transfer. Some had a payment fail mid transaction. Some want a refund. And some are being
+targeted by scammers asking for their OTP or PIN. Human agents cannot read every single ticket carefully from scratch.
+Your job is to build a small web service that reads one customer message and quickly answers four questions about it:
+1. What kind of problem is this? (wrong transfer, failed payment, refund, phishing, or other)
+2. How serious is it? (low, medium, high, or critical)
+3. Which team should handle it? (customer support, disputes, payments, or fraud)
+4. What is a one sentence summary an agent can read in two seconds?
+The service must also raise a flag for phishing or critical cases so a human reviews them immediately. That is the whole task.
+You will receive a JSON request, you must return a JSON response. Everything else is up to you.
+1. Required Endpoints
+Method Path Purpose
+GET /health Return a simple service health response
+POST /sort-ticket Accept one CRM ticket and return a structured classification
+2. Request Schema
+POST /sort-ticket accepts a JSON body in the following shape:
+{
+"ticket_id": "T-001",
+"channel": "app",
+"locale": "en",
+"message": "I sent 5000 taka to a wrong number this morning, please help me get it back"
+}
+Field Type Required Notes
+ticket_id string Yes Echo this value back in the response
+channel string Optional One of: app, sms, call_center, merchant_portal
+locale string Optional One of: bn, en, mixed
+message string Yes Free text customer complaint
+3. Response Schema
+Your service must return JSON in the following shape:
+{
+"ticket_id": "T-001",
+"case_type": "wrong_transfer",
+"severity": "high",
+"department": "dispute_resolution",
+"agent_summary": "Customer reports sending 5000 BDT to a wrong number and requests recovery.",
+"human_review_required": true,
+"confidence": 0.85
+}
+Field Type Notes
+ticket_id string Must match the value sent in the request
+case_type enum See enum table below
+severity enum One of: low, medium, high, critical
+department enum See enum table below
+agent_summary string One or two neutral sentences describing the ticket
+human_review_required boolean Set to true for critical severity or phishing cases
+confidence number Float between 0 and 1
+
+4. Enums
+4.1 case_type
+Value When to use it
+wrong_transfer Money sent to the wrong recipient
+payment_failed Transaction failed but balance may be deducted
+refund_request Customer is asking for a refund
+phishing_or_social_engineering Suspicious calls, SMS, or someone asking for PIN, OTP, or password
+other Anything not covered above
+4.2 department
+Value Typical case_type
+customer_support other, low severity refund_request
+dispute_resolution wrong_transfer, contested refund_request
+payments_ops payment_failed
+fraud_risk phishing_or_social_engineering
+5. Safety Rule
+The agent_summary field must never ask the customer to share PIN, OTP, password, or full card number. Any response that
+does will fail that test case automatically. This rule is checked by the grader.
+6. Runtime Requirements
+Public HTTPS endpoint Required
+/health response time Within 10 seconds
+/sort-ticket response time Within 30 seconds
+GPU dependency Not allowed
+Secrets in repository Not allowed. Use environment variables.
+LLM usage Allowed but not required. Rules based solutions are accepted.
+7. Public Sample Cases
+# Message Expected case_type Severity
+1 I sent 3000 to wrong number wrong_transfer high
+2 Payment failed but balance deducted payment_failed high
+3 Someone called asking my OTP, is that bKash? phishing_or_social_engineering critical
+4 Please refund my last transaction, I changed my mind refund_request low
+5 App crashed when I opened it other low
+8. Submission via Google Form
+Field Required Notes
+Team name Yes Must match the registered team name
+GitHub repository URL Yes Public repo with README and source code
+Live API base URL Yes Must be HTTPS and /health must respond
+Deployment platform Yes Render, Railway, Fly, Vercel, EC2, Poridhi Lab, or other
+LLM used (Yes / No and which) Yes Helps the grader interpret behaviour
+Known issues or blockers Optional Useful organizer feedback
+* The GitHub repository must contain proper deployment replication documentation / runbook of the solution. This will
+be used to deploy locally if you don’t provide any live deployment URL
+Note: No team is eliminated based on this round. Use the hour to validate your deployment workflow, GitHub flow, and team coordination.
