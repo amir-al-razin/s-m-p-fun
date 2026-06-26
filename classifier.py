@@ -51,10 +51,10 @@ def sanitize_summary(summary: str) -> str:
     """
     sanitized = summary
     
-    # 1. Credentials Request Sanitization
+    # 1. Credentials Request Sanitization (including spaced/obfuscated variables)
     ask_patterns = [
-        r"(?:ask|request|please|share|provide|tell|send|input|give)\s+(?:the\s+)?(?:customer|user|client)?\s*(?:to\s+)?(?:share|provide|tell|send|give|input)?\s*(?:their|your|his|her)?\s*(?:pin|otp|password|card\s+number)",
-        r"(?:পিন|ওটিপি|পাসওয়ার্ড|কার্ড\s+নাম্বার)\s*(?:শেয়ার|দিতে|বলুন|অনুরোধ)"
+        r"(?:ask|request|please|share|provide|tell|send|input|give)\s+(?:[a-zA-Z]+\s+){0,4}(?:p\s*i\s*n|o\s*t\s*p|p\s*a\s*s\s*s\s*w\s*o\s*r\s*d|c\s*a\s*r\s*d\s*n\s*u\s*m\s*b\s*e\s*r|c\s*v\s*v)",
+        r"(?:পিন|ওটিপি|পাসওয়ার্ড|কার্ড\s*নাম্বার|সিভিভি)\s*(?:শেয়ার|দিতে|বলুন|অনুরোধ)"
     ]
     for pattern in ask_patterns:
         if re.search(pattern, sanitized, re.IGNORECASE):
@@ -74,9 +74,10 @@ def sanitize_summary(summary: str) -> str:
 
     # 2. Unauthorized Actions Promise Sanitization (Agent must not promise reversals/refunds)
     promise_patterns = [
-        (r"\b(?:we\s+will|i\s+will|agent\s+will)\s+(?:refund|return|reverse|pay\s+back|send\s+back|transfer\s+back)\b", "customer requests refund/recovery"),
+        (r"\b(?:we\s+will|i\s+will|agent\s+will)\s+(?:[a-zA-Z]+\s+){0,2}(?:refund|return|reverse|pay\s+back|send\s+back|transfer\s+back)\b", "customer requests refund/recovery"),
         (r"\b(?:money|funds|taka|bdt)\s+(?:has\s+been|will\s+be)\s+(?:refunded|returned|reversed|sent\s+back)\b", "customer requests refund/recovery"),
-        (r"\b(?:we\s+have|i\s+have)\s+(?:refunded|reversed|transferred|returned)\b", "customer requests refund/recovery")
+        (r"\b(?:we\s+have|i\s+have)\s+(?:refunded|reversed|transferred|returned)\b", "customer requests refund/recovery"),
+        (r"(?:টাকা\s+ফেরত|রিফান্ড\s+কর(?:ব|বে)|টাকা\s+ব্যাক|ফেরত\s+দেওয়া\s+হ(?:য়েছে|ব)|রিফান্ড\s+দেওয়া\s+হ(?:য়েছে|ব)|টাকা\s+পাঠানো\s+হবে)", "গ্রাহক রিফান্ডের আবেদন করেছেন")
     ]
     for pattern, replacement in promise_patterns:
         if re.search(pattern, sanitized, re.IGNORECASE):
@@ -92,6 +93,13 @@ def sanitize_summary(summary: str) -> str:
             logger.warning(f"Safety Rule violation (suspicious third party redirect) detected: '{summary}'. Sanitizing.")
             sanitized = re.sub(pattern, "refer the customer to official support channels", sanitized, flags=re.IGNORECASE)
 
+    # Redact generic URLs to prevent redirects
+    sanitized = re.sub(r"\bhttps?://\S+\b", "[REDACTED_URL]", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bwww\.\S+\b", "[REDACTED_URL]", sanitized, flags=re.IGNORECASE)
+    # Redact phone numbers (typical 11 digit mobile numbers and general sequences of 10-14 digits)
+    sanitized = re.sub(r"\b(?:\+?88)?01[3-9]\d{8}\b", "[REDACTED_CONTACT]", sanitized)
+    sanitized = re.sub(r"\b\d{10,14}\b", "[REDACTED_CONTACT]", sanitized)
+
     return sanitized
 
 def classify_heuristically(message: str) -> dict:
@@ -104,13 +112,20 @@ def classify_heuristically(message: str) -> dict:
     # Check Phishing
     for pattern in PATTERNS_PHISHING:
         if re.search(pattern, msg_lower):
-            return {
-                "case_type": CaseTypeEnum.PHISHING_OR_SOCIAL_ENGINEERING,
-                "severity": SeverityEnum.CRITICAL,
-                "department": DepartmentEnum.FRAUD_RISK,
-                "agent_summary": "Customer reports a suspicious call or message requesting sensitive credentials.",
-                "confidence": 0.90
-            }
+            # Exclusion: Check if it's a benign password/PIN reset or change request
+            exclusion_patterns = [
+                r"\breset\b", r"\bchange\b", r"\bforgot\b", r"\bforget\b", r"\bupdate\b",
+                r"রিসেট", r"চেঞ্জ", r"ভুলে\s*গেছি", r"পরিবর্তন"
+            ]
+            is_benign = any(re.search(ex, msg_lower) for ex in exclusion_patterns)
+            if not is_benign:
+                return {
+                    "case_type": CaseTypeEnum.PHISHING_OR_SOCIAL_ENGINEERING,
+                    "severity": SeverityEnum.CRITICAL,
+                    "department": DepartmentEnum.FRAUD_RISK,
+                    "agent_summary": "Customer reports a suspicious call or message requesting sensitive credentials.",
+                    "confidence": 0.90
+                }
             
     # Check Wrong Transfer
     for pattern in PATTERNS_WRONG_TRANSFER:
@@ -162,6 +177,7 @@ def classify_with_llm(message: str, channel: str = None, locale: str = None) -> 
     Classifies the ticket using the Gemini LLM via OpenRouter.
     Returns a dictionary of classification fields or raises an exception.
     """
+    import time
     if not OPENROUTER_API_KEY:
         raise ValueError("OPENROUTER_API_KEY is not set.")
         
@@ -211,10 +227,36 @@ def classify_with_llm(message: str, channel: str = None, locale: str = None) -> 
         "response_format": {"type": "json_object"}
     }
     
-    with httpx.Client(timeout=4.5) as client:
-        response = client.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        response_json = response.json()
+    max_retries = 3
+    retry_delay = 0.3  # seconds
+    response_json = None
+    
+    for attempt in range(max_retries):
+        try:
+            with httpx.Client(timeout=4.5) as client:
+                response = client.post(url, headers=headers, json=payload)
+                if response.status_code == 429:
+                    logger.warning(f"Rate limit hit (429) on attempt {attempt + 1}. Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+                elif response.status_code >= 500:
+                    logger.warning(f"Server error ({response.status_code}) on attempt {attempt + 1}. Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+                response.raise_for_status()
+                response_json = response.json()
+                break
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            if attempt == max_retries - 1:
+                raise e
+            logger.warning(f"HTTP error on attempt {attempt + 1}: {str(e)}. Retrying in {retry_delay}s...")
+            time.sleep(retry_delay)
+            retry_delay *= 2
+            
+    if not response_json:
+        raise ValueError("Failed to retrieve response from LLM completions API after retries.")
         
     content_str = response_json["choices"][0]["message"]["content"]
     result = json.loads(content_str.strip())

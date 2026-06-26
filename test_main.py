@@ -223,3 +223,52 @@ def test_unauthorized_action_safety():
     assert "official support channels" in sanitized_redirect.lower()
 
 
+def test_benign_credential_requests():
+    """
+    Verify that benign password/PIN resets do not trigger phishing.
+    """
+    payload = {
+        "ticket_id": "T-BENIGN-RESET",
+        "message": "I forgot my password and want to reset it"
+    }
+    response = client.post("/sort-ticket", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["case_type"] != CaseTypeEnum.PHISHING_OR_SOCIAL_ENGINEERING.value
+
+
+def test_safety_spaced_credentials():
+    """
+    Verify safety sanitization scrubs spaced credentials requests.
+    """
+    from classifier import sanitize_summary
+    summary = "Please ask the user to share their p i n to proceed."
+    sanitized = sanitize_summary(summary)
+    assert "p i n" not in sanitized.lower()
+    assert "credentials" in sanitized.lower()
+
+
+def test_safety_bengali_promises():
+    """
+    Verify safety sanitization scrubs Bengali refund promises.
+    """
+    from classifier import sanitize_summary
+    summary = "আমরা গ্রাহককে টাকা ফেরত দিয়েছি।"
+    sanitized = sanitize_summary(summary)
+    assert "টাকা ফেরত" not in sanitized
+    assert "রিফান্ড" in sanitized or "আবেদন" in sanitized
+
+
+def test_safety_phone_and_url_redaction():
+    """
+    Verify safety sanitization redacts phone numbers and links.
+    """
+    from classifier import sanitize_summary
+    summary = "Please check the status on www.untrusted-site.com or call 01712345678."
+    sanitized = sanitize_summary(summary)
+    assert "www.untrusted-site.com" not in sanitized
+    assert "01712345678" not in sanitized
+    assert "[REDACTED_URL]" in sanitized
+    assert "[REDACTED_CONTACT]" in sanitized
+
+

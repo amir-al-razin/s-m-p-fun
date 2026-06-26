@@ -1,4 +1,5 @@
 import re
+import threading
 from collections import OrderedDict
 from typing import Optional, Dict, Any
 
@@ -8,6 +9,7 @@ class TicketCache:
         self.maxsize = maxsize
         self.hits = 0
         self.misses = 0
+        self.lock = threading.RLock()
 
     def _normalize_message(self, message: str) -> str:
         """
@@ -27,41 +29,44 @@ class TicketCache:
         Gets a cached classification dictionary for a message.
         """
         norm_msg = self._normalize_message(message)
-        if norm_msg in self.cache:
-            self.hits += 1
-            # Move to end (MRU)
-            self.cache.move_to_end(norm_msg)
-            return self.cache[norm_msg]
-        
-        self.misses += 1
-        return None
+        with self.lock:
+            if norm_msg in self.cache:
+                self.hits += 1
+                # Move to end (MRU)
+                self.cache.move_to_end(norm_msg)
+                return self.cache[norm_msg]
+            
+            self.misses += 1
+            return None
 
     def set(self, message: str, classification: Dict[str, Any]):
         """
         Stores a classification dictionary for a message.
         """
         norm_msg = self._normalize_message(message)
-        if norm_msg in self.cache:
-            self.cache.move_to_end(norm_msg)
-        self.cache[norm_msg] = classification
-        
-        # Evict oldest if full
-        if len(self.cache) > self.maxsize:
-            self.cache.popitem(last=False)
+        with self.lock:
+            if norm_msg in self.cache:
+                self.cache.move_to_end(norm_msg)
+            self.cache[norm_msg] = classification
+            
+            # Evict oldest if full
+            if len(self.cache) > self.maxsize:
+                self.cache.popitem(last=False)
 
     def get_stats(self) -> Dict[str, Any]:
         """
         Returns cache metrics for observability.
         """
-        total = self.hits + self.misses
-        hit_ratio = (self.hits / total) if total > 0 else 0.0
-        return {
-            "size": len(self.cache),
-            "maxsize": self.maxsize,
-            "hits": self.hits,
-            "misses": self.misses,
-            "hit_ratio": round(hit_ratio, 2)
-        }
+        with self.lock:
+            total = self.hits + self.misses
+            hit_ratio = (self.hits / total) if total > 0 else 0.0
+            return {
+                "size": len(self.cache),
+                "maxsize": self.maxsize,
+                "hits": self.hits,
+                "misses": self.misses,
+                "hit_ratio": round(hit_ratio, 2)
+            }
 
 # Global cache instance
 global_cache = TicketCache(maxsize=1000)
